@@ -15,7 +15,13 @@ const upload = multer({ dest: 'temp/' });
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Endpoint to receive the book creation request
+
+app.get("/", (req, res) => {
+  res.send({
+    Message: "Book Generator server is running correctly",
+  });
+});
+// Endpoint to recepive the book creation request
 app.post('/create-book', upload.fields([
   { name: 'coverImage', maxCount: 1 },
   { name: 'pageImages', maxCount: 100 },
