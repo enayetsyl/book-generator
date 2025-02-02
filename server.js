@@ -31,19 +31,15 @@ app.post('/create-book', upload.fields([
     const publisherLogo = req.files.publisherLogo ? req.files.publisherLogo[0] : null;
     const tempDir = path.join(__dirname, 'temp');
 
-    // Ensure the temp directory exists
     await fs.ensureDir(tempDir);
     console.log('Step 1: Ensure temp directory exists');
 
-    // Step 1: Handle image downloads and conversions
     const handleImage = async (image, newName, index) => {
       const imagePath = path.join(tempDir, newName);
       tempFiles.push(imagePath);
 
-      // Get image metadata
       const metadata = await sharp(image.path).metadata();
       if (metadata.width <= metadata.height) {
-        // Image is not landscape
         throw new Error(`Image ${index + 1} is not in landscape orientation`);
       }
 
@@ -61,25 +57,19 @@ app.post('/create-book', upload.fields([
     const publisherLogoPath = publisherLogo ? await handleImage(publisherLogo, `${title}_publisher_logo.jpg`, -1) : null;
     console.log('Step 1: Finished image handling and conversion');
 
-    // Convert texts to an array
     const textsArray = JSON.parse(texts);
-
-    // Validation check
     if (textsArray.length !== pageImagePaths.length) {
       throw new Error('The number of texts and page images must be equal');
     }
 
-    // Calculate image and text height ratio
     const imageHeightRatio = parseFloat(imageTextRatio.split('/')[0]) / 100;
     const textHeightRatio = parseFloat(imageTextRatio.split('/')[1]) / 100;
 
-    // Step 2 to 6: Create PDF
     const pdfPath = path.join(tempDir, `${title}.pdf`);
     tempFiles.push(pdfPath);
 
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 0, autoFirstPage: false });
 
-    // Register custom fonts
     const bengaliFontPath = path.join(__dirname, 'fonts', 'kalpurush.ttf');
     doc.registerFont('Bengali', bengaliFontPath);
 
@@ -88,10 +78,8 @@ app.post('/create-book', upload.fields([
 
     console.log('Create PDF started');
 
-    // Cover Page
     if (coverImagePath) {
-      doc.addPage()
-        .image(coverImagePath, 0, 0, { width: doc.page.width, height: doc.page.height });
+      doc.addPage().image(coverImagePath, 0, 0, { width: doc.page.width, height: doc.page.height });
       if (title) {
         const textWidth = doc.page.width * 0.7;
         const textX = (doc.page.width - textWidth) / 2;
@@ -104,11 +92,10 @@ app.post('/create-book', upload.fields([
     }
     console.log('Cover Page created');
 
-    // Individual Pages
     pageImagePaths.forEach((imagePath, index) => {
       const margin = leftMargin === 'on' ? 40 : 0;
       const textMargin = margin ? margin : 15;
-      doc.addPage({ size: 'A4', layout: 'landscape', margin: 0 }); // Set margin to 0 and handle it manually
+      doc.addPage({ size: 'A4', layout: 'landscape', margin: 0 });
       doc.image(imagePath, margin, 0, { width: doc.page.width - margin, height: doc.page.height * imageHeightRatio });
       doc.rect(margin, doc.page.height * imageHeightRatio, doc.page.width - margin, doc.page.height * textHeightRatio).fill('white');
       doc.fontSize(fontSize || 18)
@@ -118,17 +105,15 @@ app.post('/create-book', upload.fields([
     });
     console.log('Individual Pages created');
 
-    // Back Page
     if (coverImagePath) {
-      doc.addPage()
-        .image(coverImagePath, 0, 0, { width: doc.page.width, height: doc.page.height });
-      doc.rect(0, 0, doc.page.width, doc.page.height).fillOpacity(0.6).fill('white'); // Simulate image opacity
+      doc.addPage().image(coverImagePath, 0, 0, { width: doc.page.width, height: doc.page.height });
+      doc.rect(0, 0, doc.page.width, doc.page.height).fillOpacity(0.6).fill('white');
       if (publisherLogoPath) {
         doc.image(publisherLogoPath, doc.page.width / 2 - 50, doc.page.height * 0.6 - 50, { fit: [100, 100], align: 'center' });
       }
       if (publisherName) {
         const textWidth = doc.widthOfString(publisherName);
-        const rectWidth = textWidth + 40; // 20 pixels padding on each side
+        const rectWidth = textWidth + 40;
         const rectX = (doc.page.width - rectWidth) / 2;
         doc.rect(rectX, doc.page.height * 0.7, rectWidth, doc.page.height * 0.1).fillOpacity(0.8).fill('black');
         doc.fontSize(20)
@@ -141,38 +126,43 @@ app.post('/create-book', upload.fields([
     doc.end();
     console.log('Back Page created and PDF finalized');
 
-    // Wait for the PDF stream to finish
     pdfStream.on('finish', async () => {
       console.log('PDF stream finished');
       const pdfData = await fs.readFile(pdfPath);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${title}.pdf"`);
       res.send(pdfData);
-      
-      // Cleanup after sending
-      await Promise.all(tempFiles.map(file => fs.remove(file)));
-      console.log('Cleanup completed');
+
+      await cleanupFiles(tempFiles);
     });
-    // If the client aborts the request, handle it gracefully
+
     req.on('aborted', async () => {
       console.log('Request aborted by the client');
-      await Promise.all(tempFiles.map(async (file) => {
-        await fs.remove(file);
-      }));
-      console.log('Cleanup finished after request aborted');
+      await cleanupFiles(tempFiles);
     });
+
   } catch (error) {
     console.error('Error in processing:', error.message);
     res.status(400).send({ error: error.message });
-    // Cleanup in case of error
-    if (tempFiles.length > 0) {
-      await Promise.all(tempFiles.map(async (file) => {
-        await fs.remove(file);
-      }));
-      console.log('Step 8: Cleanup finished after error');
-    }
+
+    await cleanupFiles(tempFiles);
   }
 });
+
+
+const cleanupFiles = async (files) => {
+  try {
+    await Promise.all(files.map(async (file) => {
+      if (await fs.pathExists(file)) {
+        await fs.remove(file);
+      }
+    }));
+    console.log('Temporary files cleaned up successfully.');
+  } catch (cleanupError) {
+    console.error('Error during cleanup:', cleanupError.message);
+  }
+};
+
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
