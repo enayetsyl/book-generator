@@ -30,12 +30,17 @@ app.post('/create-book', upload.fields([
   let tempFiles = [];
   try {
     const { title, texts, language, leftMargin, textColor, publisherName, imageTextRatio, fontSize } = req.body;
-    console.log('Received data:', title, texts, language, leftMargin, textColor, publisherName, imageTextRatio, fontSize);
+    // console.log('Received data:', title, texts, language, leftMargin, textColor, publisherName, imageTextRatio, fontSize);
+    // console.log(texts.length)
+    console.log('left margin', leftMargin)
+    console.log("Received leftMargin:", leftMargin, typeof leftMargin);
 
     const coverImage = req.files.coverImage ? req.files.coverImage[0] : null;
     const pageImages = req.files.pageImages || [];
     const publisherLogo = req.files.publisherLogo ? req.files.publisherLogo[0] : null;
     const tempDir = path.join(__dirname, 'temp');
+
+    
 
     await fs.ensureDir(tempDir);
     console.log('Step 1: Ensure temp directory exists');
@@ -63,7 +68,12 @@ app.post('/create-book', upload.fields([
     const publisherLogoPath = publisherLogo ? await handleImage(publisherLogo, `${title}_publisher_logo.jpg`, -1) : null;
     console.log('Step 1: Finished image handling and conversion');
 
+    // console.log("Raw Texts:", texts);
     const textsArray = JSON.parse(texts);
+    // console.log("Parsed Texts Array Length:", textsArray.length);
+    
+
+
     if (textsArray.length !== pageImagePaths.length) {
       throw new Error('The number of texts and page images must be equal');
     }
@@ -99,16 +109,39 @@ app.post('/create-book', upload.fields([
     console.log('Cover Page created');
 
     pageImagePaths.forEach((imagePath, index) => {
-      const margin = leftMargin === 'on' ? 40 : 0;
-      const textMargin = margin ? margin : 15;
+      // Determine the printing page number.
+      // If a cover exists, the first inner page becomes page 2.
+      const pageNum = coverImagePath ? index + 2 : index + 1;
+      const innerMargin = 40;
+      let marginLeft = 0;
+      // For odd pages, we want the margin on the left (binding side).
+      // For even pages, the binding is on the right so no left margin is needed.
+      if (pageNum % 2 === 1) {
+        marginLeft = innerMargin;
+      } else {
+        marginLeft = 0;
+      }
+      
+      // Calculate the available width by subtracting the inner margin.
+      const availableWidth = doc.page.width - innerMargin;
+    
+      // Add a new page.
       doc.addPage({ size: 'A4', layout: 'landscape', margin: 0 });
-      doc.image(imagePath, margin, 0, { width: doc.page.width - margin, height: doc.page.height * imageHeightRatio });
-      doc.rect(margin, doc.page.height * imageHeightRatio, doc.page.width - margin, doc.page.height * textHeightRatio).fill('white');
+      
+      // Place the image: start at marginLeft so that on odd pages the content is shifted right.
+      doc.image(imagePath, marginLeft, 0, { width: availableWidth, height: doc.page.height * imageHeightRatio });
+      
+      // Draw a white rectangle for the text background.
+      doc.rect(marginLeft, doc.page.height * imageHeightRatio, availableWidth, doc.page.height * textHeightRatio)
+        .fill('white');
+      
+      // Write the text within the text area.
       doc.fontSize(fontSize || 18)
         .fillColor(textColor || 'black')
         .font(language === 'bengali' ? 'Bengali' : 'Helvetica')
-        .text(textsArray[index], textMargin, doc.page.height * imageHeightRatio + 15, { width: doc.page.width - textMargin - 30 });
+        .text(textsArray[index], marginLeft, doc.page.height * imageHeightRatio + 15, { width: availableWidth - 30 });
     });
+    
     console.log('Individual Pages created');
 
     if (coverImagePath) {
@@ -136,7 +169,7 @@ app.post('/create-book', upload.fields([
       console.log('PDF stream finished');
       const pdfData = await fs.readFile(pdfPath);
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${title}.pdf"`);
+      res.setHeader('Content-Disposition', `attachment; filename="book.pdf"`);
       res.send(pdfData);
 
       await cleanupFiles(tempFiles);
